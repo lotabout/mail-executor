@@ -4,7 +4,8 @@ var path = require('path');
 //==============================================================================
 // Configuration
 var config = {
-    mail_dir: './mail/Pending/cur'
+    mail_dir: './mail/Pending/cur',
+    mail_done_dir: './mail/Ended/cur'
 };
 
 //
@@ -50,7 +51,26 @@ Monitor.prototype.stop = function() {
 };
 
 //==============================================================================
-// JobFactory: take a mail and generate a job for running.
+// Parser: parse the mail content for later use
+function Parser() {
+}
+
+Parser.prototype.parse_content = function (content) {
+    var line_spliter = /
+};
+
+var test_mail_1 = "#task:download, dir: SomeWhere\nurl1\nurl2\nurl3\n\nurl1\nurl2\n\n";
+
+
+//==============================================================================
+// JobFactory: take a mail and generate a job for running, will need to parse.
+
+var MailParser = require('mailparser').MailParser;
+
+function JobFactory() {
+}
+
+
 
 function print(x) {
     console.log(x);
@@ -95,4 +115,10 @@ function ls_files(dir) {
             return false;
         }
     });
+}
+
+function bind(obj, method) {
+    return function() {
+        obj[method].apply(obj, arguments);
+    };
 }
