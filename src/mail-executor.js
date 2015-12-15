@@ -5,7 +5,8 @@ var path = require('path');
 // Configuration
 var config = {
     mail_dir: './mail/Pending/cur',
-    mail_done_dir: './mail/Ended/cur'
+    mail_done_dir: './mail/Ended/cur',
+    default_header: {type: 'download', dir: './output'},
 };
 
 //
@@ -52,37 +53,87 @@ Monitor.prototype.stop = function() {
 
 //==============================================================================
 // Parser: parse the mail content for later use
+
+//var MailParser = require('mailparser').MailParser;
+
 function Parser() {
 }
 
+// split the content into records(not continuous lines as separator)
 Parser.prototype.parse_content = function (content) {
-    var line_spliter = /
+    return content.split(/(?:\r?\n)(?:[ \r\t\f]*\n)+/)
 };
 
-var test_mail_1 = "#task:download, dir: SomeWhere\nurl1\nurl2\nurl3\n\nurl1\nurl2\n\n";
+Parser.prototype.parse_header = function(header) {
+    var ret = {}
 
+    var components = header.split(/\s*,\s*/);
+    for (var i = 0, len = components.length; i < len; i++) {
+        var key_val = components[i].split(/\s*:\s*/);
+        if (key_val.length >= 2) {
+            ret[key_val[0]] = key_val[1];
+        } else if (key_val.length == 1) {
+            ret[key_val[0]] = true;
+        }
+    }
+
+    return ret;
+};
+
+// records starts with an optional configuration line (starts with '#')
+Parser.prototype.parse_record = function(record) {
+    var record = record.trim();
+
+    var header = clone(config.default_header);
+    var params = record;
+
+    if (record[0] == '#' ) {
+
+        // This is a configuration line
+        var end_pos = record.indexOf('\n');
+        end_pos = end_pos > 0 ? end_pos : record.length;
+
+        var new_header = this.parse_header(record.substring(1, end_pos));
+        extend(header, new_header);
+        params = record.substring(end_pos + 1);
+    }
+
+    return [header, params];
+}
+
+Parser.prototype.content_to_task = function(content) {
+    var tasks = [];
+
+    var records = this.parse_content(content);
+    for (var i = 0, len = records.length; i < len; i++) {
+        var record = records[i];
+        var header_param = this.parse_record(record);
+        var task = new Task();
+        task.header = header_param[0];
+        task.params = header_param[1];
+        tasks.push(task);
+    }
+    return tasks;
+};
+
+//var sample_mail = "www.baidu.com\nwww.abc.com\n\n#type: bilibili, dir : output/dir\nwww.bilibili.com/videos/2\nwww.bilibili.com/videos/1\n"
+//x = new Parser();
+//console.log(x.content_to_task(sample_mail));
 
 //==============================================================================
 // JobFactory: take a mail and generate a job for running, will need to parse.
 
-var MailParser = require('mailparser').MailParser;
 
 function JobFactory() {
 }
 
-
-
-function print(x) {
-    console.log(x);
-}
-
-var monitor = new Monitor(config.mail_dir);
-monitor.watch(print);
-
 //==============================================================================
 // Task: A job may contain many tasks, while a task may contain several
 // executors
-//
+
+function Task() {
+}
+
 //==============================================================================
 // Executor, do the actual work
 //
@@ -121,4 +172,25 @@ function bind(obj, method) {
     return function() {
         obj[method].apply(obj, arguments);
     };
+}
+
+function allKeys(obj) {
+    var keys = [];
+    for (var key in obj) {
+        keys.push(key);
+    }
+    return keys;
+}
+
+function clone(obj) {
+    return Array.isArray(obj) ? obj.slice() : extend({}, obj);
+};
+
+function extend(obj, source) {
+    var keys = allKeys(source);
+    for (var i = 0, len = keys.length; i < len; i++) {
+        var key = keys[i];
+        obj[key] = source[key];
+    }
+    return obj;
 }
