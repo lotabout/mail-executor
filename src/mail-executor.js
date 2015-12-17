@@ -5,6 +5,92 @@ var util = require('util');
 var URL = require('url');
 var MailParser = require("mailparser").MailParser;
 
+
+//==============================================================================
+// Helper Functions
+
+// obj1 and obj2 are treated as set, and return obj1-obj2
+// no optimization at all
+function difference(a, b) {
+    var ret = [];
+    for (var i = 0, len = a.length; i < len; i++) {
+        if (b.indexOf(a[i]) < 0) {
+            ret.push(a[i]);
+        }
+    }
+
+    return ret;
+}
+
+// get the files of a directory (non-recursive)
+function ls_files(dir) {
+    var files = fs.readdirSync(dir);
+    return files.filter(function (f) {
+        try {
+            return fs.statSync(path.join(dir, f)).isFile();
+        } catch (e) {
+            return false;
+        }
+    });
+}
+
+function bind(obj, method) {
+    return function() {
+        obj[method].apply(obj, arguments);
+    };
+}
+
+function allKeys(obj) {
+    var keys = [];
+    for (var key in obj) {
+        keys.push(key);
+    }
+    return keys;
+}
+
+function clone(obj) {
+    return Array.isArray(obj) ? obj.slice() : extend({}, obj);
+}
+
+function extend(obj, source) {
+    var keys = allKeys(source);
+    for (var i = 0, len = keys.length; i < len; i++) {
+        var key = keys[i];
+        obj[key] = source[key];
+    }
+    return obj;
+}
+
+// cause I want to pass the resolve/reject to other place, so `new Promise` do
+// not suit well
+function Deferred() {
+    this.resolve = null;
+    this.reject = null;
+
+    this.promise = new Promise(function(resolve, reject){
+        this.resolve = resolve;
+        this.reject = reject;
+    }.bind(this));
+}
+
+if (Set === undefined) {
+    function Set(iter) {
+        this.obj = {};
+
+        for (var i = 0, len = iter.length; i < len; i++) {
+            this.obj[iter[i]] = true;
+        }
+
+        this.has = function(key) {
+            if (key in this.obj) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+    }
+}
+
 //==============================================================================
 // Configuration
 var config = {
@@ -400,7 +486,7 @@ function GoalDownloadDispatcher(header, params) {
 util.inherits(GoalDownloadDispatcher, Goal);
 
 
-var you_get_sites = new Set(['163', '56', 'acfun', 'archive', 'baidu', 'bandcamp', 'baomihua', 'bilibili', 'cntv', 'cbs', 'dailymotion', 'dilidili', 'dongting', 'douban', 'douyutv', 'ehow', 'facebook', 'flickr', 'freesound', 'fun', 'google', 'heavy-music', 'iask', 'ifeng', 'in', 'instagram', 'interest', 'iqilu', 'iqiyi', 'isuntv', 'joy', 'jpopsuki', 'kankanews', 'khanacademy', 'ku6', 'kugou', 'kuwo', 'letv', 'lizhi', 'magisto', 'metacafe', 'miomio', 'mixcloud', 'mtv81', 'musicplayon', '7gogo', 'nicovideo', 'pinterest', 'pixnet', 'pptv', 'qianmo', 'qq', 'sina', 'smgbb', 'sohu', 'soundcloud', 'ted', 'theplatform', 'tucao', 'tudou', 'tumblr', 'twitter', 'vidto', 'vimeo', 'weibo', 'veoh', 'vine', 'vk', 'xiami', 'xiaokaxiu', 'yinyuetai', 'miaopai', 'youku', 'youtu', 'youtube', 'zhanqi']);
+var you_get_sites = ['163', '56', 'acfun', 'archive', 'baidu', 'bandcamp', 'baomihua', 'bilibili', 'cntv', 'cbs', 'dailymotion', 'dilidili', 'dongting', 'douban', 'douyutv', 'ehow', 'facebook', 'flickr', 'freesound', 'fun', 'google', 'heavy-music', 'iask', 'ifeng', 'in', 'instagram', 'interest', 'iqilu', 'iqiyi', 'isuntv', 'joy', 'jpopsuki', 'kankanews', 'khanacademy', 'ku6', 'kugou', 'kuwo', 'letv', 'lizhi', 'magisto', 'metacafe', 'miomio', 'mixcloud', 'mtv81', 'musicplayon', '7gogo', 'nicovideo', 'pinterest', 'pixnet', 'pptv', 'qianmo', 'qq', 'sina', 'smgbb', 'sohu', 'soundcloud', 'ted', 'theplatform', 'tucao', 'tudou', 'tumblr', 'twitter', 'vidto', 'vimeo', 'weibo', 'veoh', 'vine', 'vk', 'xiami', 'xiaokaxiu', 'yinyuetai', 'miaopai', 'youku', 'youtu', 'youtube', 'zhanqi'];
 
 GoalDownloadDispatcher.prototype._info_of = function(url) {
     var info = {};
@@ -501,74 +587,6 @@ GoalFactory.prototype.new_goal = function(header, params) {
             return new Goal({}, ':');
     }
 };
-
-
-//==============================================================================
-// Helper Functions
-
-// obj1 and obj2 are treated as set, and return obj1-obj2
-// no optimization at all
-function difference(a, b) {
-    var ret = [];
-    for (var i = 0, len = a.length; i < len; i++) {
-        if (b.indexOf(a[i]) < 0) {
-            ret.push(a[i]);
-        }
-    }
-
-    return ret;
-}
-
-// get the files of a directory (non-recursive)
-function ls_files(dir) {
-    var files = fs.readdirSync(dir);
-    return files.filter(function (f) {
-        try {
-            return fs.statSync(path.join(dir, f)).isFile();
-        } catch (e) {
-            return false;
-        }
-    });
-}
-
-function bind(obj, method) {
-    return function() {
-        obj[method].apply(obj, arguments);
-    };
-}
-
-function allKeys(obj) {
-    var keys = [];
-    for (var key in obj) {
-        keys.push(key);
-    }
-    return keys;
-}
-
-function clone(obj) {
-    return Array.isArray(obj) ? obj.slice() : extend({}, obj);
-}
-
-function extend(obj, source) {
-    var keys = allKeys(source);
-    for (var i = 0, len = keys.length; i < len; i++) {
-        var key = keys[i];
-        obj[key] = source[key];
-    }
-    return obj;
-}
-
-// cause I want to pass the resolve/reject to other place, so `new Promise` do
-// not suit well
-function Deferred() {
-    this.resolve = null;
-    this.reject = null;
-
-    this.promise = new Promise(function(resolve, reject){
-        this.resolve = resolve;
-        this.reject = reject;
-    }.bind(this));
-}
 
 
 //==============================================================================
