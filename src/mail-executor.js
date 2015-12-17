@@ -5,9 +5,6 @@ var util = require('util');
 var URL = require('url');
 var MailParser = require("mailparser").MailParser;
 
-var scheduler = new Scheduler();
-scheduler.start();
-
 //==============================================================================
 // Configuration
 var config = {
@@ -178,7 +175,9 @@ Scheduler.prototype._run_task = function(task) {
     var scheduler = this;
     this.current_running ++;
 
+    console.log('[Debug] executing: [', task.cmd, ']');
     task.process = sp.exec(task.cmd, task.options, function(error, stdout, stderr) {
+        console.log('[Debug] Done: [', task.cmd, ']');
         // handle the scheduler related ends.
         scheduler.current_running--;
         scheduler._process_next();
@@ -230,6 +229,10 @@ Scheduler.prototype.stop = function() {
 //s.submit(task1, task2, task3);
 //s.start();
 
+var scheduler = new Scheduler();
+scheduler.start();
+
+
 //==============================================================================
 // JobFactory: take a mail and generate a job for running, will need to parse.
 function Job(mail, content) {
@@ -241,12 +244,14 @@ function Job(mail, content) {
 
 Job.prototype._done = function (values) {
     // move the mail to other place
+    fs.renameSync(path.join(config.mail_dir, this.mail), path.join(config.mail_done_dir, this.mail));
+    console.log('[Debug] mail done: [', this.mail, ']');
 };
 
 Job.prototype.run = function() {
     // start the goals
     for (var i = 0, len = this.goals.length; i < len; i++) {
-        this.goals.length.run();
+        this.goals[i].run();
     }
 
     // wait for the tasks to be done
@@ -255,8 +260,9 @@ Job.prototype.run = function() {
         promises.push(this.goals[i].promise);
     }
 
-    Promise.all(promises, function(values) {
-        this._done(values);
+    var self = this;
+    Promise.all(promises).then(function(values) {
+        self._done(values);
     });
 };
 
@@ -295,15 +301,16 @@ Goal.prototype.run = function() {
         promises.push(this.tasks[i].promise);
     }
 
-    Promise.all(promises, function(values) {
-        this._done(values);
-
-        this.deferred.resolve(values);
+    var self = this;
+    Promise.all(promises).then(function(values) {
+        self._done(values);
+        self.deferred.resolve(values);
     });
 };
 
 Goal.prototype._done= function(values) {
     // is called when a goal is done, default do nothing
+    console.log('[Debug] Goal done: ', this.header);
 };
 
 //------------------------------------------------------------------------------
@@ -452,7 +459,6 @@ GoalDownloadDispatcher.prototype._to_tasks = function () {
 
     // conver to the tasks.
     var urls = this.params.trim().split(/\s+/);
-    console.log('here');
 
     for (var i = 0, len = urls.length; i < len; i++) {
         var url = urls[i];
@@ -573,5 +579,5 @@ function process_mails(files) {
     }
 }
 
-var monitor = new Monitor(config.mail_dir);
+var monitor = new Monitor(config.mail_dir, 3000);
 monitor.watch(process_mails);
