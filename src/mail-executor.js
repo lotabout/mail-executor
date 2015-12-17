@@ -1,6 +1,10 @@
 var fs = require('fs');
 var path = require('path');
 var sp = require('child_process');
+var util = require('util');
+
+var scheduler = new Scheduler();
+scheduler.start();
 
 //==============================================================================
 // Configuration
@@ -9,6 +13,7 @@ var config = {
     mail_done_dir: './mail/Ended/cur',
     default_header: {type: 'download', dir: './output'},
     max_concurrent: 2,
+    default_options: {cwd: './default_output_idr'},
 };
 
 //
@@ -103,19 +108,17 @@ Parser.prototype.parse_record = function(rec) {
     return [header, params];
 };
 
-Parser.prototype.content_to_task = function(content) {
-    var tasks = [];
+Parser.prototype.content_to_goals = function(content) {
+    var goals = [];
 
     var records = this.parse_content(content);
     for (var i = 0, len = records.length; i < len; i++) {
         var record = records[i];
         var header_param = this.parse_record(record);
-        var task = new Task();
-        task.header = header_param[0];
-        task.params = header_param[1];
-        tasks.push(task);
+        var goal = new Goal(header_param[0], header_param[1]);
+        goals.push(goal);
     }
-    return tasks;
+    return goals;
 };
 
 //var sample_mail = "www.baidu.com\nwww.abc.com\n\n#type: bilibili, dir : output/dir\nwww.bilibili.com/videos/2\nwww.bilibili.com/videos/1\n"
@@ -126,7 +129,124 @@ Parser.prototype.content_to_task = function(content) {
 // JobFactory: take a mail and generate a job for running, will need to parse.
 
 function JobFactory() {
+
 }
+
+//==============================================================================
+// Goal: a job may have several goals, a goal may contain many tasks
+
+function Goal(header, params) {
+    this.header = header;
+    this.params = params;
+
+    this.deferred = new Deferred();
+    this.promise = this.deferred.promise;
+}
+
+Goal.prototype.set_header = function(header) {
+    this.header = header;
+};
+
+Goal.prototype.set_params = function(params) {
+    this.params = params;
+};
+
+Goal.prototype._to_tasks = function() {
+    // default method for turning into tasks
+    return [new Task(this.params)];
+};
+
+Goal.prototype.run = function() {
+    // submit the tasks to the scheduler
+    this.tasks = this._to_tasks();
+    scheduler.submit(this.tasks);
+
+    // wait for the tasks to be done
+    var promises = [];
+    for (var i = 0, len = this.tasks.length; i < len; i++) {
+        promises.push(this.tasks[i].promise);
+    }
+
+    Promise.all(promises, function(values) {
+        this._done(values);
+
+        this.deferred.resolve(values);
+    });
+};
+
+Goal.prototype._done= function(values) {
+    // is called when a goal is done, default do nothing
+};
+
+//------------------------------------------------------------------------------
+// Sub Goal: You-Get
+
+function GoalYouGet(header, params) {
+    Goal.call(this, header, params);
+}
+util.inherits(GoalYouGet, Goal);
+
+
+GoalYouGet.prototype._to_tasks = function () {
+    // overwrite the default method of converting to params to tasks
+    var tasks = [];
+
+    // construction options
+    var opt = clone(config.default_options);
+
+    // do not check whether the dir is existed.
+    if ('dir' in this.header) {
+        opt.cwd = this.header.dir;
+    }
+
+    // conver to the tasks.
+    var urls = this.params.trim().split(/\s+/);
+
+    for (var i = 0, len = urls.length; i < len; i++) {
+        var cmd = you_get_cmd + " '" + urls[i] + "'";
+        tasks.push(new Task(cmd, opt));
+    }
+
+    return tasks;
+};
+
+//------------------------------------------------------------------------------
+// Sub Goal: bilibili
+
+function GoalBilibili(header, params) {
+    Goal.call(this, header, params);
+}
+util.inherits(GoalBilibili, Goal);
+
+
+GoalBilibili.prototype._to_tasks = function () {
+    // overwrite the default method of converting to params to tasks
+    var tasks = [];
+
+    // construction options
+    var opt = clone(config.default_options);
+
+    // do not check whether the dir is existed.
+    if ('dir' in this.header) {
+        opt.cwd = this.header.dir;
+    }
+
+    // conver to the tasks.
+    var urls = this.params.trim().split(/\s+/);
+
+    for (var i = 0, len = urls.length; i < len; i++) {
+        var url = urls[i];
+
+        if (url.match(/^(?:av)?[0-9]+$/)) {
+            url = 'www.bilibili.com/video/' + url;
+        }
+
+        var cmd = you_get_cmd + " '" + url + "'";
+        tasks.push(new Task(cmd, opt));
+    }
+
+    return tasks;
+};
 
 //==============================================================================
 // Goal: a job may have several goals, a goal may contain many tasks
@@ -134,8 +254,9 @@ function JobFactory() {
 //==============================================================================
 // Task: the actual object for execution.
 
-function Task(command) {
+function Task(command, options) {
     this.cmd = command;
+    this.options = options === undefined ? config.default_options : options;
 
     this.deferred = new Deferred();
     this.promise = this.deferred.promise;
@@ -147,12 +268,6 @@ Task.prototype.on_exit = function (error, stdout, stderr) {
     this.deferred.resolve(error);
 };
 
-//------------------------------------------------------------------------------ 
-// Sub task: download
-function TaskDownload(URL) {
-
-}
-
 //==============================================================================
 // Scheduler: schedule the executors. like limit the maximal executor number
 
@@ -163,9 +278,14 @@ function Scheduler() {
     this.running = {};
 }
 
-Scheduler.prototype.submit = function () {
-    for (var i = 0, len = arguments.length; i < len; i++) {
-        this.tasks.push(arguments[i]);
+// task can be a single task or an array of tasks.
+Scheduler.prototype.submit = function (tasks) {
+    if (util.isArray(tasks)) {
+        for (var i = 0, len = tasks.length; i < len; i++) {
+            this.tasks.push(tasks[i]);
+        }
+    } else {
+        this.tasks.push(tasks);
     }
 
     if (this.enabled) {
@@ -177,7 +297,7 @@ Scheduler.prototype._run_task = function(task) {
     var scheduler = this;
     this.current_running ++;
 
-    task.process = sp.exec(task.cmd, function(error, stdout, stderr) {
+    task.process = sp.exec(task.cmd, task.options, function(error, stdout, stderr) {
         // handle the scheduler related ends.
         scheduler.current_running--;
         scheduler._process_next();
