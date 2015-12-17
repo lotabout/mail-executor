@@ -3,6 +3,7 @@ var path = require('path');
 var sp = require('child_process');
 var util = require('util');
 var URL = require('url');
+var MailParser = require("mailparser").MailParser;
 
 var scheduler = new Scheduler();
 scheduler.start();
@@ -25,7 +26,7 @@ function Monitor(directory, timeout) {
     this.self = this;
     this.dir = directory;
     this._files = [];
-    this._timeout = 120000;
+    this._timeout = timeout === undefined ? 120000 : timeout;
 }
 
 Monitor.prototype._get_new_files = function() {
@@ -111,13 +112,15 @@ Parser.prototype.parse_record = function(rec) {
 };
 
 Parser.prototype.content_to_goals = function(content) {
+    var goal_factory = new GoalFactory();
+
     var goals = [];
 
     var records = this.parse_content(content);
     for (var i = 0, len = records.length; i < len; i++) {
         var record = records[i];
         var header_param = this.parse_record(record);
-        var goal = new Goal(header_param[0], header_param[1]);
+        var goal = goal_factory.new_goal(header_param[0], header_param[1]);
         goals.push(goal);
     }
     return goals;
@@ -127,33 +130,134 @@ Parser.prototype.content_to_goals = function(content) {
 //x = new Parser();
 //console.log(x.content_to_task(sample_mail));
 
+
+//==============================================================================
+// Task: the actual object for execution.
+
+function Task(command, options) {
+    this.cmd = command;
+    this.options = options === undefined ? config.default_options : options;
+
+    this.deferred = new Deferred();
+    this.promise = this.deferred.promise;
+}
+
+Task.prototype.on_exit = function (error, stdout, stderr) {
+    // resolve the promise
+
+    this.deferred.resolve(error);
+};
+
+
+//==============================================================================
+// Scheduler: schedule the executors. like limit the maximal executor number
+
+function Scheduler() {
+    this.tasks = [];
+    this.current_running = 0;
+    this.enabled = false;
+    this.running = {};
+}
+
+// task can be a single task or an array of tasks.
+Scheduler.prototype.submit = function (tasks) {
+    if (util.isArray(tasks)) {
+        for (var i = 0, len = tasks.length; i < len; i++) {
+            this.tasks.push(tasks[i]);
+        }
+    } else {
+        this.tasks.push(tasks);
+    }
+
+    if (this.enabled) {
+        this._process_next();
+    }
+};
+
+Scheduler.prototype._run_task = function(task) {
+    var scheduler = this;
+    this.current_running ++;
+
+    task.process = sp.exec(task.cmd, task.options, function(error, stdout, stderr) {
+        // handle the scheduler related ends.
+        scheduler.current_running--;
+        scheduler._process_next();
+
+        var pid = [task.process.pid];
+        if (scheduler.running[pid] !== undefined) {
+            delete scheduler.running[pid];
+        }
+
+        // call task's callback
+        if ('on_exit' in task) {
+            task.on_exit(error, stdout, stderr);
+        }
+    });
+
+    this.running[task.process.pid] = task;
+};
+
+Scheduler.prototype._process_next = function() {
+    if (!this.enabled || this.current_running >= config.max_concurrent) {
+        return;
+    }
+
+    var spare_number = config.max_concurrent - this.current_running;
+
+    while (this.tasks.length > 0 && spare_number > 0) {
+        // take out a task and run
+        this._run_task(this.tasks.shift());
+        spare_number --;
+    }
+};
+
+Scheduler.prototype.start = function() {
+    this.enabled = true;
+    this._process_next();
+};
+
+Scheduler.prototype.stop = function() {
+    this.enabled = false;
+};
+
+// Test case
+
+//task1 = {cmd: 'sleep 100', on_exit: function() {console.log("task 1");}};
+//task2 = {cmd: 'exit 0', on_exit: function() {console.log("task 2");}};
+//task3 = {cmd: 'sleep 3', on_exit: function() {console.log("task 3");}};
+
+//s = new Scheduler();
+//s.submit(task1, task2, task3);
+//s.start();
+
 //==============================================================================
 // JobFactory: take a mail and generate a job for running, will need to parse.
-
-function JobFactory() {
-
+function Job(mail, content) {
+    this.mail = mail;
+    this.content = content;
+    var parser = new Parser();
+    this.goals = parser.content_to_goals(this.content);
 }
 
-//==============================================================================
-// GoalFactory, generate goals according to header and params.
-function GoalFactory() {
+Job.prototype._done = function (values) {
+    // move the mail to other place
+};
 
-}
-
-GoalFactory.prototype.new_goal = function(header, params) {
-    switch (header.type) {
-        case 'download':
-            return new GoalDownloadDispatcher(header, params);
-            break;
-        case 'bilibili':
-            return new GoalBilibili(header, params);
-            break;
-        case 'you-get':
-            return new GoalYouGet(header, params);
-            break;
-        default:
-            return null;
+Job.prototype.run = function() {
+    // start the goals
+    for (var i = 0, len = this.goals.length; i < len; i++) {
+        this.goals.length.run();
     }
+
+    // wait for the tasks to be done
+    var promises = [];
+    for (var i = 0, len = this.goals.length; i < len; i++) {
+        promises.push(this.goals[i].promise);
+    }
+
+    Promise.all(promises, function(values) {
+        this._done(values);
+    });
 };
 
 //==============================================================================
@@ -360,106 +464,27 @@ GoalDownloadDispatcher.prototype._to_tasks = function () {
 };
 
 //==============================================================================
-// Goal: a job may have several goals, a goal may contain many tasks
+// GoalFactory, generate goals according to header and params.
+function GoalFactory() {
 
-//==============================================================================
-// Task: the actual object for execution.
-
-function Task(command, options) {
-    this.cmd = command;
-    this.options = options === undefined ? config.default_options : options;
-
-    this.deferred = new Deferred();
-    this.promise = this.deferred.promise;
 }
 
-Task.prototype.on_exit = function (error, stdout, stderr) {
-    // resolve the promise
-
-    this.deferred.resolve(error);
-};
-
-
-//==============================================================================
-// Scheduler: schedule the executors. like limit the maximal executor number
-
-function Scheduler() {
-    this.tasks = [];
-    this.current_running = 0;
-    this.enabled = false;
-    this.running = {};
-}
-
-// task can be a single task or an array of tasks.
-Scheduler.prototype.submit = function (tasks) {
-    if (util.isArray(tasks)) {
-        for (var i = 0, len = tasks.length; i < len; i++) {
-            this.tasks.push(tasks[i]);
-        }
-    } else {
-        this.tasks.push(tasks);
-    }
-
-    if (this.enabled) {
-        this._process_next();
+GoalFactory.prototype.new_goal = function(header, params) {
+    switch (header.type) {
+        case 'download':
+            return new GoalDownloadDispatcher(header, params);
+            break;
+        case 'bilibili':
+            return new GoalBilibili(header, params);
+            break;
+        case 'you-get':
+            return new GoalYouGet(header, params);
+            break;
+        default:
+            return new Goal({}, ':');
     }
 };
 
-Scheduler.prototype._run_task = function(task) {
-    var scheduler = this;
-    this.current_running ++;
-
-    task.process = sp.exec(task.cmd, task.options, function(error, stdout, stderr) {
-        // handle the scheduler related ends.
-        scheduler.current_running--;
-        scheduler._process_next();
-
-        var pid = [task.process.pid];
-        if (scheduler.running[pid] !== undefined) {
-            delete scheduler.running[pid];
-        }
-
-        // call task's callback
-        if ('on_exit' in task) {
-            task.on_exit(error, stdout, stderr);
-        }
-    });
-
-    this.running[task.process.pid] = task;
-};
-
-Scheduler.prototype._process_next = function() {
-    if (!this.enabled || this.current_running >= config.max_concurrent) {
-        return;
-    }
-
-    var spare_number = config.max_concurrent - this.current_running;
-
-    while (this.tasks.length > 0 && spare_number > 0) {
-        // take out a task and run
-        this._run_task(this.tasks.shift());
-        spare_number --;
-    }
-};
-
-Scheduler.prototype.start = function() {
-    this.enabled = true;
-    this._process_next();
-};
-
-Scheduler.prototype.stop = function() {
-    this.enabled = false;
-};
-
-// Test case
-
-//task1 = {cmd: 'sleep 100', on_exit: function() {console.log("task 1");}};
-//task2 = {cmd: 'exit 0', on_exit: function() {console.log("task 2");}};
-//task3 = {cmd: 'sleep 3', on_exit: function() {console.log("task 3");}};
-
-//s = new Scheduler();
-//s.submit(task1, task2, task3);
-//s.start();
 
 //==============================================================================
 // Helper Functions
@@ -527,3 +552,26 @@ function Deferred() {
         this.reject = reject;
     }.bind(this));
 }
+
+
+//==============================================================================
+// Starter
+function process_mail(file) {
+    var mailparser = new MailParser();
+
+    mailparser.on("end", function(mail_object){
+        var job = new Job(file, mail_object.text);
+        job.run();
+    });
+
+    fs.createReadStream(path.join(config.mail_dir, file)).pipe(mailparser);
+}
+
+function process_mails(files) {
+    for (var i = 0, len = files.length; i < len; i++) {
+        process_mail(files[i]);
+    }
+}
+
+var monitor = new Monitor(config.mail_dir);
+monitor.watch(process_mails);
