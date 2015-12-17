@@ -10,9 +10,10 @@ var MailParser = require("mailparser").MailParser;
 var config = {
     mail_dir: './mail/Pending/cur',
     mail_done_dir: './mail/Ended/cur',
-    default_header: {type: 'download', dir: './output'},
+    default_output_dir: './output',
+    default_header: {type: 'download', dir: 'output'},
     max_concurrent: 2,
-    default_options: {cwd: './default_output_idr'},
+    default_options: {cwd: '.'},
     commands: {you_get: 'you-get', wget: 'wget'},
 };
 
@@ -332,7 +333,12 @@ GoalDownload.prototype._to_tasks = function () {
 
     // do not check whether the dir is existed.
     if ('dir' in this.header) {
-        opt.cwd = this.header.dir;
+        opt.cwd = path.join(config.default_output_dir,this.header.dir);
+        try {
+            fs.mkdir(opt.cwd);
+        } catch(e) {
+            // do nothing, maybe the directory already exists.
+        }
     }
 
     // conver to the tasks.
@@ -454,7 +460,12 @@ GoalDownloadDispatcher.prototype._to_tasks = function () {
 
     // do not check whether the dir is existed.
     if ('dir' in this.header) {
-        opt.cwd = this.header.dir;
+        opt.cwd = path.join(config.default_output_dir, this.header.dir);
+        try {
+            fs.mkdir(opt.cwd);
+        } catch(e) {
+            // do nothing, maybe the directory already exists.
+        }
     }
 
     // conver to the tasks.
