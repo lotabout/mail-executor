@@ -1,5 +1,6 @@
 var fs = require('fs');
 var path = require('path');
+var sp = require('child_process');
 
 //==============================================================================
 // Configuration
@@ -7,6 +8,7 @@ var config = {
     mail_dir: './mail/Pending/cur',
     mail_done_dir: './mail/Ended/cur',
     default_header: {type: 'download', dir: './output'},
+    max_concurrent: 2,
 };
 
 //
@@ -61,11 +63,11 @@ function Parser() {
 
 // split the content into records(not continuous lines as separator)
 Parser.prototype.parse_content = function (content) {
-    return content.split(/(?:\r?\n)(?:[ \r\t\f]*\n)+/)
+    return content.split(/(?:\r?\n)(?:[ \r\t\f]*\n)+/);
 };
 
 Parser.prototype.parse_header = function(header) {
-    var ret = {}
+    var ret = {};
 
     var components = header.split(/\s*,\s*/);
     for (var i = 0, len = components.length; i < len; i++) {
@@ -81,8 +83,8 @@ Parser.prototype.parse_header = function(header) {
 };
 
 // records starts with an optional configuration line (starts with '#')
-Parser.prototype.parse_record = function(record) {
-    var record = record.trim();
+Parser.prototype.parse_record = function(rec) {
+    var record = rec.trim();
 
     var header = clone(config.default_header);
     var params = record;
@@ -99,7 +101,7 @@ Parser.prototype.parse_record = function(record) {
     }
 
     return [header, params];
-}
+};
 
 Parser.prototype.content_to_task = function(content) {
     var tasks = [];
@@ -123,7 +125,6 @@ Parser.prototype.content_to_task = function(content) {
 //==============================================================================
 // JobFactory: take a mail and generate a job for running, will need to parse.
 
-
 function JobFactory() {
 }
 
@@ -138,8 +139,81 @@ function Task() {
 // Executor, do the actual work
 //
 //==============================================================================
-// Processor: schedule the executors. like limit the maximal executor number
-//
+// Scheduler: schedule the executors. like limit the maximal executor number
+
+function Scheduler() {
+    this.tasks = [];
+    this.current_running = 0;
+    this.enabled = false;
+    this.running = {};
+}
+
+Scheduler.prototype.submit = function () {
+    for (var i = 0, len = arguments.length; i < len; i++) {
+        this.tasks.push(arguments[i]);
+    }
+
+    if (this.enabled) {
+        this._process_next();
+    }
+};
+
+Scheduler.prototype._run_task = function(task) {
+    var scheduler = this;
+    this.current_running ++;
+
+    task.process = sp.exec(task.cmd, function(error, stdout, stderr) {
+        // handle the scheduler related ends.
+        scheduler.current_running--;
+        scheduler._process_next();
+
+        var pid = [task.process.pid];
+        if (scheduler.running[pid] !== undefined) {
+            delete scheduler.running[pid];
+        }
+
+        // call task's callback
+        if ('on_exit' in task) {
+            task.on_exit(error, stdout, stderr);
+        }
+    });
+
+    this.running[task.process.pid] = task;
+};
+
+Scheduler.prototype._process_next = function() {
+    if (!this.enabled || this.current_running >= config.max_concurrent) {
+        return;
+    }
+
+    var spare_number = config.max_concurrent - this.current_running;
+
+    while (this.tasks.length > 0 && spare_number > 0) {
+        // take out a task and run
+        this._run_task(this.tasks.shift());
+        spare_number --;
+    }
+};
+
+Scheduler.prototype.start = function() {
+    this.enabled = true;
+    this._process_next();
+};
+
+Scheduler.prototype.stop = function() {
+    this.enabled = false;
+};
+
+// Test case
+
+//task1 = {cmd: 'sleep 100', on_exit: function() {console.log("task 1");}};
+//task2 = {cmd: 'exit 0', on_exit: function() {console.log("task 2");}};
+//task3 = {cmd: 'sleep 3', on_exit: function() {console.log("task 3");}};
+
+//s = new Scheduler();
+//s.submit(task1, task2, task3);
+//s.start();
+
 //==============================================================================
 // Helper Functions
 
@@ -184,7 +258,7 @@ function allKeys(obj) {
 
 function clone(obj) {
     return Array.isArray(obj) ? obj.slice() : extend({}, obj);
-};
+}
 
 function extend(obj, source) {
     var keys = allKeys(source);
