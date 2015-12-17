@@ -129,15 +129,30 @@ function JobFactory() {
 }
 
 //==============================================================================
-// Task: A job may contain many tasks, while a task may contain several
-// executors
-
-function Task() {
-}
+// Goal: a job may have several goals, a goal may contain many tasks
 
 //==============================================================================
-// Executor, do the actual work
-//
+// Task: the actual object for execution.
+
+function Task(command) {
+    this.cmd = command;
+
+    this.deferred = new Deferred();
+    this.promise = this.deferred.promise;
+}
+
+Task.prototype.on_exit = function (error, stdout, stderr) {
+    // resolve the promise
+
+    this.deferred.resolve(error);
+};
+
+//------------------------------------------------------------------------------ 
+// Sub task: download
+function TaskDownload(URL) {
+
+}
+
 //==============================================================================
 // Scheduler: schedule the executors. like limit the maximal executor number
 
@@ -267,4 +282,16 @@ function extend(obj, source) {
         obj[key] = source[key];
     }
     return obj;
+}
+
+// cause I want to pass the resolve/reject to other place, so `new Promise` do
+// not suit well
+function Deferred() {
+    this.resolve = null;
+    this.reject = null;
+
+    this.promise = new Promise(function(resolve, reject){
+        this.resolve = resolve;
+        this.reject = reject;
+    }).bind(this);
 }
