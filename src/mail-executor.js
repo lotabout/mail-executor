@@ -2,6 +2,7 @@ var fs = require('fs');
 var path = require('path');
 var sp = require('child_process');
 var util = require('util');
+var URL = require('url');
 
 var scheduler = new Scheduler();
 scheduler.start();
@@ -14,6 +15,7 @@ var config = {
     default_header: {type: 'download', dir: './output'},
     max_concurrent: 2,
     default_options: {cwd: './default_output_idr'},
+    commands: {you_get: 'you-get', wget: 'wget'},
 };
 
 //
@@ -134,6 +136,25 @@ function JobFactory() {
 
 //==============================================================================
 // GoalFactory, generate goals according to header and params.
+function GoalFactory() {
+
+}
+
+GoalFactory.prototype.new_goal = function(header, params) {
+    switch (header.type) {
+        case 'download':
+            return new GoalDownloadDispatcher(header, params);
+            break;
+        case 'bilibili':
+            return new GoalBilibili(header, params);
+            break;
+        case 'you-get':
+            return new GoalYouGet(header, params);
+            break;
+        default:
+            return null;
+    }
+};
 
 //==============================================================================
 // Goal: a job may have several goals, a goal may contain many tasks
@@ -253,6 +274,90 @@ GoalBilibili.prototype._params_to_urls = function () {
     return urls;
 };
 
+//------------------------------------------------------------------------------
+// Sub Goal: General Download Dispatcher
+
+function GoalDownloadDispatcher(header, params) {
+    Goal.call(this, header, params);
+}
+util.inherits(GoalDownloadDispatcher, Goal);
+
+
+var you_get_sites = new Set(['163', '56', 'acfun', 'archive', 'baidu', 'bandcamp', 'baomihua', 'bilibili', 'cntv', 'cbs', 'dailymotion', 'dilidili', 'dongting', 'douban', 'douyutv', 'ehow', 'facebook', 'flickr', 'freesound', 'fun', 'google', 'heavy-music', 'iask', 'ifeng', 'in', 'instagram', 'interest', 'iqilu', 'iqiyi', 'isuntv', 'joy', 'jpopsuki', 'kankanews', 'khanacademy', 'ku6', 'kugou', 'kuwo', 'letv', 'lizhi', 'magisto', 'metacafe', 'miomio', 'mixcloud', 'mtv81', 'musicplayon', '7gogo', 'nicovideo', 'pinterest', 'pixnet', 'pptv', 'qianmo', 'qq', 'sina', 'smgbb', 'sohu', 'soundcloud', 'ted', 'theplatform', 'tucao', 'tudou', 'tumblr', 'twitter', 'vidto', 'vimeo', 'weibo', 'veoh', 'vine', 'vk', 'xiami', 'xiaokaxiu', 'yinyuetai', 'miaopai', 'youku', 'youtu', 'youtube', 'zhanqi']);
+
+GoalDownloadDispatcher.prototype._info_of = function(url) {
+    var info = {};
+
+    // chech for bilibili URL
+    var match = /^(?:av)?([0-9]+)$/.exec(url);
+    if (match !== null) {
+        info.url = match[1];
+        info.type = 'bilibili';
+        return info;
+    }
+
+    // check for you-get types.
+    // get the hostname
+    var new_url = url;
+    if (url.indexOf('://') < 0) {
+        new_url = 'http://' + url;
+    }
+
+    try {
+        hostnames = URL.parse(new_url).hostname.split('.');
+        for (var i = 0, len = hostnames.length; i < len; i++) {
+            if (you_get_sites.has(hostnames[i])) {
+                return {type: 'you-get', url: url};
+            }
+        }
+    } catch (e) {
+        return {type: 'unknown', url: ''};
+    }
+
+    // default to wget
+    return {type: 'wget', url:url};
+};
+
+GoalDownloadDispatcher.prototype._get_download_cmd = function(url) {
+    var info = this._info_of(url);
+
+    switch(info.type) {
+        case 'bilibili':
+            return config.commands.you_get + " 'www.bilibili.com/video/av" + info.url + "'";
+            break;
+        case 'you-get':
+            return config.commands.you_get + " '" + info.url + "'";
+            break;
+        default:
+            return config.commands.wget + " -c '" + info.url + "'";
+            break;
+    }
+};
+
+GoalDownloadDispatcher.prototype._to_tasks = function () {
+    // overwrite the default method of converting to params to tasks
+    var tasks = [];
+
+    // construction options
+    var opt = clone(config.default_options);
+
+    // do not check whether the dir is existed.
+    if ('dir' in this.header) {
+        opt.cwd = this.header.dir;
+    }
+
+    // conver to the tasks.
+    var urls = this.params.trim().split(/\s+/);
+    console.log('here');
+
+    for (var i = 0, len = urls.length; i < len; i++) {
+        var url = urls[i];
+        cmd = this._get_download_cmd(url);
+        tasks.push(new Task(cmd, opt));
+    }
+
+    return tasks;
+};
 
 //==============================================================================
 // Goal: a job may have several goals, a goal may contain many tasks
@@ -420,5 +525,5 @@ function Deferred() {
     this.promise = new Promise(function(resolve, reject){
         this.resolve = resolve;
         this.reject = reject;
-    }).bind(this);
+    }.bind(this));
 }
