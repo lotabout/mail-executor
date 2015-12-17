@@ -133,6 +133,9 @@ function JobFactory() {
 }
 
 //==============================================================================
+// GoalFactory, generate goals according to header and params.
+
+//==============================================================================
 // Goal: a job may have several goals, a goal may contain many tasks
 
 function Goal(header, params) {
@@ -179,15 +182,16 @@ Goal.prototype._done= function(values) {
 };
 
 //------------------------------------------------------------------------------
-// Sub Goal: You-Get
+// Sub Goal: General Download
 
-function GoalYouGet(header, params) {
+function GoalDownload(header, params, downloader) {
+    this.downloader = downloader === undefined ? 'wget' : downloader;
     Goal.call(this, header, params);
 }
-util.inherits(GoalYouGet, Goal);
+util.inherits(GoalDownload, Goal);
 
 
-GoalYouGet.prototype._to_tasks = function () {
+GoalDownload.prototype._to_tasks = function () {
     // overwrite the default method of converting to params to tasks
     var tasks = [];
 
@@ -200,53 +204,55 @@ GoalYouGet.prototype._to_tasks = function () {
     }
 
     // conver to the tasks.
-    var urls = this.params.trim().split(/\s+/);
+    var urls = this._params_to_urls();
 
     for (var i = 0, len = urls.length; i < len; i++) {
-        var cmd = you_get_cmd + " '" + urls[i] + "'";
+        var url = urls[i];
+        var cmd = this.downloader + " '" + url + "'";
         tasks.push(new Task(cmd, opt));
     }
 
     return tasks;
 };
+
+// inherit this to parse the params differently.
+GoalDownload.prototype._params_to_urls = function() {
+    return this.params.trim().split(/\s+/);
+};
+
+//------------------------------------------------------------------------------
+// Sub Goal: You-Get
+
+function GoalYouGet(header, params) {
+    GoalDownload.call(this, header, params, 'you-get');
+}
+util.inherits(GoalYouGet, GoalDownload);
 
 //------------------------------------------------------------------------------
 // Sub Goal: bilibili
 
 function GoalBilibili(header, params) {
-    Goal.call(this, header, params);
+    GoalDownload.call(this, header, params, 'you-get');
 }
 util.inherits(GoalBilibili, Goal);
 
-
-GoalBilibili.prototype._to_tasks = function () {
-    // overwrite the default method of converting to params to tasks
-    var tasks = [];
-
-    // construction options
-    var opt = clone(config.default_options);
-
-    // do not check whether the dir is existed.
-    if ('dir' in this.header) {
-        opt.cwd = this.header.dir;
-    }
-
+GoalBilibili.prototype._params_to_urls = function () {
     // conver to the tasks.
     var urls = this.params.trim().split(/\s+/);
 
     for (var i = 0, len = urls.length; i < len; i++) {
         var url = urls[i];
-
-        if (url.match(/^(?:av)?[0-9]+$/)) {
-            url = 'www.bilibili.com/video/' + url;
+        var match = /^(?:av)?([0-9]+)$/.exec(url);
+        if (match !== null) {
+            url = 'www.bilibili.com/video/' + match[1];
         }
 
-        var cmd = you_get_cmd + " '" + url + "'";
-        tasks.push(new Task(cmd, opt));
+        urls[i] = url;
     }
 
-    return tasks;
+    return urls;
 };
+
 
 //==============================================================================
 // Goal: a job may have several goals, a goal may contain many tasks
@@ -267,6 +273,7 @@ Task.prototype.on_exit = function (error, stdout, stderr) {
 
     this.deferred.resolve(error);
 };
+
 
 //==============================================================================
 // Scheduler: schedule the executors. like limit the maximal executor number
