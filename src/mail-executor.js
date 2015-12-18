@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 var fs = require('fs');
 var path = require('path');
 var sp = require('child_process');
@@ -71,24 +73,6 @@ function Deferred() {
         this.resolve = resolve;
         this.reject = reject;
     }.bind(this));
-}
-
-if (Set === undefined) {
-    function Set(iter) {
-        this.obj = {};
-
-        for (var i = 0, len = iter.length; i < len; i++) {
-            this.obj[iter[i]] = true;
-        }
-
-        this.has = function(key) {
-            if (key in this.obj) {
-                return true;
-            } else {
-                return false;
-            }
-        }
-    }
 }
 
 //==============================================================================
@@ -306,6 +290,20 @@ Scheduler.prototype.stop = function() {
     this.enabled = false;
 };
 
+Scheduler.prototype.kill = function(signal) {
+    this.enabled = false;
+
+    var sig = signal === undefined ? 'SIGINT' : signal;
+
+    for (var key in this.running) {
+        var task = this.running[key];
+        if (task && task.process) {
+            task.process.kill(sig);
+        }
+        delete this.running[key];
+    }
+};
+
 // Test case
 
 //task1 = {cmd: 'sleep 100', on_exit: function() {console.log("task 1");}};
@@ -319,6 +317,8 @@ Scheduler.prototype.stop = function() {
 var scheduler = new Scheduler();
 scheduler.start();
 
+process.on('SIGTERM', function(){scheduler.kill('SIGTERM');});
+process.on('SIGINT', function(){scheduler.kill('SIGINT');});
 
 //==============================================================================
 // JobFactory: take a mail and generate a job for running, will need to parse.
@@ -343,7 +343,7 @@ Job.prototype.run = function() {
 
     // wait for the tasks to be done
     var promises = [];
-    for (var i = 0, len = this.goals.length; i < len; i++) {
+    for (i = 0, len = this.goals.length; i < len; i++) {
         promises.push(this.goals[i].promise);
     }
 
@@ -527,13 +527,10 @@ GoalDownloadDispatcher.prototype._get_download_cmd = function(url) {
     switch(info.type) {
         case 'bilibili':
             return config.commands.you_get + " 'www.bilibili.com/video/av" + info.url + "'";
-            break;
         case 'you-get':
             return config.commands.you_get + " '" + info.url + "'";
-            break;
         default:
             return config.commands.wget + " -c '" + info.url + "'";
-            break;
     }
 };
 
@@ -576,13 +573,10 @@ GoalFactory.prototype.new_goal = function(header, params) {
     switch (header.type) {
         case 'download':
             return new GoalDownloadDispatcher(header, params);
-            break;
         case 'bilibili':
             return new GoalBilibili(header, params);
-            break;
         case 'you-get':
             return new GoalYouGet(header, params);
-            break;
         default:
             return new Goal({}, ':');
     }
