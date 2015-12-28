@@ -149,9 +149,9 @@ Parser.prototype.parse_header = function(header) {
     for (var i = 0, len = components.length; i < len; i++) {
         var key_val = components[i].split(/\s*:\s*/);
         if (key_val.length >= 2) {
-            ret[key_val[0]] = key_val[1];
+            ret[key_val[0].trim()] = key_val[1].trim();
         } else if (key_val.length == 1) {
-            ret[key_val[0]] = true;
+            ret[key_val[0].trim()] = true;
         }
     }
 
